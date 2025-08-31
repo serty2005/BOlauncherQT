@@ -151,6 +151,12 @@ def get_config_value(config, section, key, default=None, type_cast=str):
     # В этой функции не используем log_message, чтобы избежать циклических зависимостей
     # при инициализации логирования, которая зависит от конфига.
     # Вместо этого используем print/sys.stderr.
+
+    # Если объект конфига не передан (None), сразу возвращаем значение по умолчанию.
+    # Это предотвратит падение при вызове методов у None.
+    if config is None:
+        return default
+
     try:
         if type_cast == bool:
             return config.getboolean(section, key)

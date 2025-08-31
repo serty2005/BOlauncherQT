@@ -19,7 +19,7 @@ class Translator:
         else:
             base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
         
-        return os.path.join(base_path, 'locale', f'{locale_name}.qm')
+        return os.path.join(base_path, 'translations', f'{locale_name}.qm')
 
     def switch_language(self, locale_name):
         """Переключает язык приложения."""
@@ -29,14 +29,17 @@ class Translator:
         self.app.removeTranslator(self.translator)
         self.app.removeTranslator(self.system_translator)
 
-        # Устанавливаем перевод стандартных диалогов Qt (например, кнопки в QMessageBox)
-        qt_locale_name = QLocale(locale_name).name() # e.g., "ru_RU"
-        translations_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
-        if self.system_translator.load(qt_locale_name, translations_path):
-            self.app.installTranslator(self.system_translator)
-            logging.debug(f"Загружен системный перевод Qt для локали: {qt_locale_name}")
-        else:
-            logging.warning(f"Не удалось загрузить системный перевод Qt для локали: {qt_locale_name} по пути {translations_path}")
+        # Устанавливаем перевод стандартных диалогов Qt, ТОЛЬКО если язык НЕ английский
+        if not locale_name.startswith('en'):
+            qt_locale_name = QLocale(locale_name).name() # e.g., "ru_RU"
+            translations_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+            if self.system_translator.load(qt_locale_name, translations_path):
+                self.app.installTranslator(self.system_translator)
+                logging.debug(f"Загружен системный перевод Qt для локали: {qt_locale_name}")
+            else:
+                # Это предупреждение теперь будет появляться только если для НЕ-английского языка
+                # не найден системный перевод, что будет являться реальной проблемой.
+                logging.warning(f"Не удалось загрузить системный перевод Qt для локали: {qt_locale_name} по пути {translations_path}")
 
 
         # Устанавливаем перевод нашего приложения

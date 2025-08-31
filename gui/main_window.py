@@ -52,6 +52,12 @@ class MainWindow(QMainWindow):
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
+        central_widget.setStyleSheet("""
+            QPushButton {
+                padding: 5px 30px; /* Внутренние отступы: 5px сверху/снизу, 10px слева/справа */
+                font-size: 10pt;    /* Можно немного увеличить шрифт, если стандартный мелкий */
+            }
+        """)
         self.main_layout = QVBoxLayout(central_widget)
         self.main_layout.setContentsMargins(15, 15, 15, 15)
 
@@ -134,6 +140,20 @@ class MainWindow(QMainWindow):
         self.check_button.setText(self.tr("Check"))
         self.launch_button.setText(self.tr("Launch"))
         self.status_label.setText(self.tr("Waiting for input..."))
+
+        buttons_to_sync = [self.paste_button, self.check_button, self.launch_button]
+        max_width = 0
+        for button in buttons_to_sync:
+            # sizeHint() возвращает предпочтительный размер кнопки на основе ее текста и стиля
+            width = button.sizeHint().width()
+            if width > max_width:
+                max_width = width
+        
+        # Устанавливаем всем кнопкам одинаковую минимальную ширину,
+        # равную максимальной из предпочтительных ширин.
+        for button in buttons_to_sync:
+            button.setMinimumWidth(max_width)
+
         # Обновляем иконку флага, так как язык мог измениться
         self._update_language_button_icon()
 

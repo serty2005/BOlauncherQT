@@ -3,3 +3,4 @@ build/
 .venv/
 *.ini
 **/__pycache__
+*/*.ts
