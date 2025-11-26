@@ -8,7 +8,8 @@ import traceback
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QVBoxLayout,
     QGridLayout, QLabel, QLineEdit, QPushButton, QProgressBar,
-    QTextEdit, QMessageBox, QSizePolicy, QInputDialog, QHBoxLayout
+    QTextEdit, QMessageBox, QSizePolicy, QInputDialog, QHBoxLayout,
+    QComboBox  # Добавлен импорт QComboBox
 )
 from PyQt6.QtCore import Qt, QThread, QEvent, QTimer, QProcess, QSize
 from PyQt6.QtGui import QColor, QPalette, QFont, QTextOption, QIcon, QGuiApplication
@@ -60,6 +61,10 @@ class MainWindow(QMainWindow):
                 padding: 5px 30px; /* Внутренние отступы: 5px сверху/снизу, 10px слева/справа */
                 font-size: 10pt;    /* Можно немного увеличить шрифт, если стандартный мелкий */
             }
+            QComboBox {
+                padding: 4px;
+                font-size: 10pt;
+            }
         """)
         self.main_layout = QVBoxLayout(central_widget)
         self.main_layout.setContentsMargins(15, 15, 15, 15)
@@ -74,7 +79,7 @@ class MainWindow(QMainWindow):
         self._launch_data = {}
 
         if self.initial_target:
-            self.target_entry.setText(self.initial_target)
+            self.target_entry.setCurrentText(self.initial_target) # Изменено с setText на setCurrentText
             QTimer.singleShot(100, self.start_process_flow)
 
     def setup_ui(self):
@@ -89,10 +94,19 @@ class MainWindow(QMainWindow):
         self.lang_button.clicked.connect(self._switch_language)
         input_row_layout.addWidget(self.lang_button)
 
-        self.target_entry = QLineEdit()
-        self.target_entry.returnPressed.connect(self.start_process_flow)
-        self.target_entry.installEventFilter(self)
+        # --- ИЗМЕНЕНИЯ: QComboBox вместо QLineEdit для истории ---
+        self.target_entry = QComboBox()
+        self.target_entry.setEditable(True) # Разрешаем ввод текста
+        self.target_entry.setInsertPolicy(QComboBox.InsertPolicy.InsertAtTop) # Новые элементы добавляются в начало списка
+        # Подключаем сигнал нажатия Enter на поле ввода внутри ComboBox
+        self.target_entry.lineEdit().returnPressed.connect(self.start_process_flow)
+        # Устанавливаем EventFilter на внутренний QLineEdit для обработки вставки по колесику
+        self.target_entry.lineEdit().installEventFilter(self)
+        
+        # Растягиваем поле ввода
+        self.target_entry.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         input_row_layout.addWidget(self.target_entry, 1)
+        # ---------------------------------------------------------
 
         self.paste_button = QPushButton()
         self.paste_button.clicked.connect(self.paste_from_clipboard)
@@ -225,7 +239,6 @@ class MainWindow(QMainWindow):
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, QColor(192, 192, 192))
         QApplication.setPalette(palette)
         
-    # ... (весь остальной код файла main_window.py, начиная с _update_status, остается без изменений)
     def _update_status(self, message, level="INFO"):
         color = "black"
         if level == "ERROR": color = "red"
@@ -373,10 +386,16 @@ class MainWindow(QMainWindow):
         self._set_check_button_to_check()
 
     def start_process_flow(self):
-        target_string = self.target_entry.text().strip()
+        # Используем currentText() вместо text()
+        target_string = self.target_entry.currentText().strip()
         if not target_string:
             self._update_status(self.tr("Enter a URL or an LM/AnyDesk ID."), level="WARNING")
             return
+
+        # --- ИЗМЕНЕНИЯ: Добавление в историю (избегая дубликатов) ---
+        if self.target_entry.findText(target_string) == -1:
+            self.target_entry.addItem(target_string)
+        # -----------------------------------------------------------
 
         self._update_text_area("")
         self._update_progress(0)
@@ -536,7 +555,8 @@ class MainWindow(QMainWindow):
             self._update_progress(0)
 
     def start_check(self):
-        target_string = self.target_entry.text().strip()
+        # Используем currentText()
+        target_string = self.target_entry.currentText().strip()
         if not target_string:
             self._update_status(self.tr("Enter a URL or IP:port to check."), level="WARNING")
             return
@@ -546,6 +566,10 @@ class MainWindow(QMainWindow):
             self._update_status(self.tr("Invalid request"), level="WARNING")
             self._update_progress(0)
             return
+
+        # Добавляем в историю при проверке тоже, если это полезная проверка
+        if self.target_entry.findText(target_string) == -1:
+            self.target_entry.addItem(target_string)
 
         if self.worker_thread is not None and self.worker_thread.isRunning():
              self._update_status(self.tr("An operation is already in progress. Please wait."), level="WARNING")
@@ -574,8 +598,8 @@ class MainWindow(QMainWindow):
 
         if clipboard_content and clipboard_content.strip():
             truncated_content = clipboard_content.strip()[:100]
-            self.target_entry.clear()
-            self.target_entry.setText(truncated_content)
+            # Изменено с clear+setText на setCurrentText
+            self.target_entry.setCurrentText(truncated_content)
             self._update_status(self.tr("Waiting for input..."))
         else:
             self._update_status(self.tr("Clipboard is empty or contains non-text data."), level="WARNING")
@@ -598,7 +622,8 @@ class MainWindow(QMainWindow):
             event.accept()
 
     def eventFilter(self, obj, event):
-        if obj is self.target_entry and event.type() == QEvent.Type.MouseButtonPress:
+        # Проверяем не сам target_entry, а его lineEdit()
+        if obj is self.target_entry.lineEdit() and event.type() == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.MiddleButton:
                 self.paste_from_clipboard()
                 return True
