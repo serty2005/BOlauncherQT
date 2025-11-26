@@ -17,6 +17,7 @@ from core.config import get_config_value
 from utils.anydesk_utils import launch_anydesk
 from utils.litemanager_utils import launch_litemanager
 from utils.url_utils import find_anydesk_id, find_litemanager_id, parse_target_string
+from utils.resource_utils import get_resource_path
 from utils.process_utils import is_anydesk_running
 from workers.tasks import CheckWorker, LaunchWorker, LaunchWorkerFromStep4, LaunchWorkerFromStep5, BaseWorker
 
@@ -42,7 +43,9 @@ class MainWindow(QMainWindow):
         self.setMaximumHeight(400)
         self.resize(width, height)
 
-        icon_path = os.path.join(os.path.dirname(sys.argv[0]), 'icon.ico')
+
+        # Устанавливаем иконку окна
+        icon_path = get_resource_path('icon.ico')
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         else:
@@ -171,8 +174,7 @@ class MainWindow(QMainWindow):
         current_locale = get_config_value(self.config, 'Settings', 'Language', default='ru')
         target_locale = 'en' if current_locale == 'ru' else 'ru'
         
-        script_dir = os.path.dirname(sys.argv[0])
-        icon_path = os.path.join(script_dir, 'icons', f'{target_locale}.png')
+        icon_path = get_resource_path(os.path.join('icons', f'{target_locale}.png'))
 
         if os.path.exists(icon_path):
             self.lang_button.setIcon(QIcon(icon_path))
@@ -202,7 +204,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, self.tr("Error"), self.tr("Failed to save language settings."))
 
     def _apply_light_palette(self):
-        # ... (код этой функции без изменений)
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor(240, 240, 240))
         palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.black)

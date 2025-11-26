@@ -3,6 +3,7 @@ import os
 import sys
 import logging
 from PyQt6.QtCore import QTranslator, QLocale, QLibraryInfo
+from utils.resource_utils import get_resource_path
 
 class Translator:
     def __init__(self, app, config):
@@ -19,7 +20,7 @@ class Translator:
         else:
             base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
         
-        return os.path.join(base_path, 'translations', f'{locale_name}.qm')
+        return get_resource_path(os.path.join('translations', f'{locale_name}.qm'))
 
     def switch_language(self, locale_name):
         """Переключает язык приложения."""
@@ -44,6 +45,8 @@ class Translator:
 
         # Устанавливаем перевод нашего приложения
         locale_path = self.get_locale_path(locale_name)
+        logging.debug(f"Ищем файл перевода по пути: {locale_path}")
+        
         if os.path.exists(locale_path):
             if self.translator.load(locale_path):
                 self.app.installTranslator(self.translator)
