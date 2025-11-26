@@ -39,7 +39,7 @@ jobs:
         # --icon: Установить иконку для исполняемого файла (путь относительно корня репозитория)
         # config.ini НЕ включаем с помощью --add-data, т.к. он генерируется при первом запуске
         run: |
-          pyinstaller --onefile --windowed --name "BackOfficeLauncher" --icon="icon.ico" main.py
+          pyinstaller --noconfirm --onefile --windowed --name "BO Launcher" --icon "icon.ico" --add-data "icons;icons" --add-data "translations;translations" --add-data "icon.ico;." main.py
 
       - name: Upload Build Artifact (for debugging)
         # Этот шаг загружает собранный .exe как артефакт workflow Run.
