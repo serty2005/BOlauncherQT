@@ -1,70 +1,106 @@
-# .github/workflows/build_release.yml
 name: Build and Release EXE
 
-# Запускать workflow при пуше тега, начинающегося с 'v'
 on:
   push:
-    tags:
-      - 'v*' # Например, v1.0.0, v1.1.0-beta
+    branches:
+      - main
 
 jobs:
-  build:
-    runs-on: windows-latest # Используем Windows Runner для сборки под Windows
-
+  build-release:
+    runs-on: windows-latest
     permissions:
-      contents: write # Требуется для создания и загрузки файлов в GitHub Release
+      contents: write
 
     steps:
+      - name: Extract version from commit message
+        id: version
+        shell: pwsh
+        run: |
+          $message = @'
+${{ github.event.head_commit.message }}
+'@
+          $subject = ($message -split "`r?`n")[0].Trim()
+
+          if ($subject -match '^(v(?<version>\d+(?:\.\d+)*))(?:-|$)') {
+            "matched=true" >> $env:GITHUB_OUTPUT
+            "tag=$($Matches[1])" >> $env:GITHUB_OUTPUT
+            "version=$($Matches['version'])" >> $env:GITHUB_OUTPUT
+            Write-Host "Release version detected: $($Matches['version'])"
+          } else {
+            "matched=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Commit '$subject' is not a release commit. Skipping build and release."
+          }
+
       - name: Checkout code
-        # Клонируем репозиторий на виртуальную машину
+        if: steps.version.outputs.matched == 'true'
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        # Устанавливаем Python 3.x (или укажите конкретную версию, например '3.10')
+        if: steps.version.outputs.matched == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
       - name: Install dependencies
-        # Устанавливаем зависимости из requirements.txt
+        if: steps.version.outputs.matched == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Ensure release tag exists
+        if: steps.version.outputs.matched == 'true'
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $currentSha = (git rev-parse HEAD).Trim()
+          $remoteSha = (git ls-remote --tags origin "refs/tags/$tag" | ForEach-Object {
+            ($_ -split "`t")[0]
+          } | Select-Object -First 1)
+
+          if ($remoteSha) {
+            $remoteSha = $remoteSha.Trim()
+            if ($remoteSha -ne $currentSha) {
+              throw "Tag $tag already exists on commit $remoteSha, but current commit is $currentSha."
+            }
+
+            Write-Host "Tag $tag already exists on the current commit."
+            exit 0
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag $tag
+          git push origin $tag
+          Write-Host "Created tag $tag on commit $currentSha."
+
       - name: Build with PyInstaller
-        # Собираем приложение в один исполняемый файл
-        # --onefile: Создать один исполняемый файл
-        # --windowed: Скрыть консольное окно при запуске
-        # --name: Установить имя выходного файла
-        # --icon: Установить иконку для исполняемого файла (путь относительно корня репозитория)
-        # config.ini НЕ включаем с помощью --add-data, т.к. он генерируется при первом запуске
+        if: steps.version.outputs.matched == 'true'
         run: |
           pyinstaller --noconfirm --onefile --windowed --name "BO Launcher" --icon "icon.ico" --add-data "icons;icons" --add-data "translations;translations" --add-data "icon.ico;." main.py
 
-      - name: Upload Build Artifact (for debugging)
-        # Этот шаг загружает собранный .exe как артефакт workflow Run.
-        # Это удобно для отладки, даже если создание релиза не удалось.
-        # Этот артефакт НЕ является файлом, прикрепленным к GitHub Release.
+      - name: Upload build artifact
+        if: steps.version.outputs.matched == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: built-exe-${{ github.ref_name }}
-          path: dist/BackOfficeLauncher.exe
+          name: built-exe-${{ steps.version.outputs.tag }}
+          path: "dist/BO Launcher.exe"
+          if-no-files-found: error
 
       - name: Create GitHub Release
-        # Создаем новый релиз на GitHub и прикрепляем к нему собранный .exe
-        # Этот шаг выполняется только при пуше тега
+        if: steps.version.outputs.matched == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.version.outputs.version }}
           files: |
-            dist/BackOfficeLauncher.exe
-          name: Release ${{ github.ref_name }} # Имя релиза будет "Release vX.Y.Z"
-          body: | # Описание релиза (можно использовать, например, сообщение тега)
-            Автоматический релиз версии ${{ github.ref_name }}
-            Собран на GitHub Actions.
-
-            Файл: BackOfficeLauncher.exe
-          draft: false # Не создавать как черновик
-          prerelease: false # Не создавать как пре-релиз
+            dist/BO Launcher.exe
+          body: |
+            Automatic release for version ${{ steps.version.outputs.version }}.
+            Source commit: ${{ github.sha }}
+          draft: false
+          prerelease: false
         env:
-          # GITHUB_TOKEN предоставляется GitHub Actions автоматически для аутентификации
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
