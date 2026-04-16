@@ -17,8 +17,8 @@ jobs:
         shell: pwsh
         run: |
           $message = @'
-${{ github.event.head_commit.message }}
-'@
+          ${{ github.event.head_commit.message }}
+          '@
           $subject = ($message -split "`r?`n")[0].Trim()
 
           if ($subject -match '^(v(?<version>\d+(?:\.\d+)*))(?:-|$)') {
