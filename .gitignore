@@ -4,3 +4,4 @@ build/
 *.ini
 **/__pycache__
 */*.ts
+*.exe

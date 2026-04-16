@@ -19,7 +19,7 @@ from utils.anydesk_utils import launch_anydesk
 from utils.litemanager_utils import launch_litemanager
 from utils.url_utils import find_anydesk_id, find_litemanager_id, parse_target_string
 from utils.resource_utils import get_resource_path
-from utils.process_utils import is_anydesk_running
+from utils.process_utils import stop_anydesk_processes
 from workers.tasks import CheckWorker, LaunchWorker, LaunchWorkerFromStep4, LaunchWorkerFromStep5, BaseWorker
 
 
@@ -244,6 +244,7 @@ class MainWindow(QMainWindow):
         if level == "ERROR": color = "red"
         elif level == "WARNING": color = "orange"
         elif level == "INFO": color = "green"
+        elif level == "SPECIAL": color = "#c9a000"
         elif level == "DEBUG": color = "gray"
         self.status_label.setText(f"<span style='color:{color};'>{message}</span>")
 
@@ -444,10 +445,38 @@ class MainWindow(QMainWindow):
         self._update_status(self.tr("AnyDesk ID found: {anydesk_id}. Preparing...").format(anydesk_id=anydesk_id), level="INFO")
         self._update_progress(10)
 
-        anydesk_is_running = is_anydesk_running()
-        should_clean = not anydesk_is_running and ctrl_pressed
-        if should_clean:
-            anydesk_appdata_path = os.path.join(os.getenv('APPDATA'), 'AnyDesk')
+        if ctrl_pressed:
+            self._update_status(
+                self.tr("Special AnyDesk launch enabled: forcing process shutdown and cache cleanup."),
+                level="SPECIAL"
+            )
+            self._update_progress(15)
+            try:
+                stopped_count = stop_anydesk_processes()
+                if stopped_count > 0:
+                    self._update_text_area(
+                        self.tr("Special AnyDesk launch: forcibly closed {count} running AnyDesk process(es).").format(
+                            count=stopped_count
+                        )
+                    )
+                else:
+                    self._update_text_area(self.tr("Special AnyDesk launch: no running AnyDesk processes were found."))
+            except Exception as e:
+                error_msg = self.tr("Error forcibly closing AnyDesk processes: {error}").format(error=e)
+                self._update_status(error_msg, level="ERROR")
+                self._update_text_area(self.tr("Error during special AnyDesk launch:") + f"\n{error_msg}")
+                self._update_progress(0)
+                return
+
+            appdata_dir = os.getenv('APPDATA')
+            if not appdata_dir:
+                error_msg = self.tr("Error: APPDATA environment variable is not available.")
+                self._update_status(error_msg, level="ERROR")
+                self._update_text_area(self.tr("Error during special AnyDesk launch:") + f"\n{error_msg}")
+                self._update_progress(0)
+                return
+
+            anydesk_appdata_path = os.path.join(appdata_dir, 'AnyDesk')
             self._update_status(self.tr("Clearing AnyDesk cache..."), level="INFO")
             self._update_progress(20)
             if os.path.exists(anydesk_appdata_path):
@@ -463,7 +492,6 @@ class MainWindow(QMainWindow):
                 self._update_status(self.tr("AnyDesk cache not found, no cleanup required."), level="INFO")
                 self._update_progress(30)
         else:
-            self._update_status(self.tr("AnyDesk cache cleanup skipped."), level="WARNING")
             self._update_progress(30)
 
         self._update_status(self.tr("AnyDesk ID: {anydesk_id}. Requesting password...").format(anydesk_id=anydesk_id), level="INFO")
@@ -473,14 +501,26 @@ class MainWindow(QMainWindow):
         password, accepted = QInputDialog.getText(
             self,
             self.tr("AnyDesk: Enter Password"),
-            self.tr("Enter the password to connect to ID {anydesk_id}:").format(anydesk_id=anydesk_id),
+            self.tr("Enter the password to connect to ID {anydesk_id} (leave empty for confirmation):").format(anydesk_id=anydesk_id),
             QLineEdit.EchoMode.Password
         )
         self._enable_buttons()
         self._set_check_button_to_check()
 
-        if accepted and password:
-            self._update_status(self.tr("Launching AnyDesk for {anydesk_id}...").format(anydesk_id=anydesk_id), level="INFO")
+        if accepted:
+            launch_message = self.tr("Launching AnyDesk for {anydesk_id}...").format(anydesk_id=anydesk_id)
+            success_message = self.tr("AnyDesk successfully launched for ID {anydesk_id}.\nProcess PID: {pid}").format(
+                anydesk_id=anydesk_id,
+                pid="{pid}"
+            )
+            if not password:
+                launch_message = self.tr("Launching AnyDesk for {anydesk_id} without password. Remote confirmation is expected.").format(anydesk_id=anydesk_id)
+                success_message = self.tr(
+                    "AnyDesk successfully launched for ID {anydesk_id} without password.\n"
+                    "Process PID: {pid}\nRemote-side confirmation is expected."
+                ).format(anydesk_id=anydesk_id, pid="{pid}")
+
+            self._update_status(launch_message, level="INFO")
             self._update_progress(50)
             anydesk_path = get_config_value(self.config, 'Settings', 'AnyDeskPath')
             if not anydesk_path or not os.path.exists(anydesk_path):
@@ -492,17 +532,13 @@ class MainWindow(QMainWindow):
             try:
                 pid = launch_anydesk(anydesk_path, anydesk_id, password)
                 self._update_status(self.tr("AnyDesk launched for {anydesk_id} (PID: {pid}).").format(anydesk_id=anydesk_id, pid=pid), level="INFO")
-                self._update_text_area(self.tr("AnyDesk successfully launched for ID {anydesk_id}.\nProcess PID: {pid}").format(anydesk_id=anydesk_id, pid=pid))
+                self._update_text_area(success_message.format(pid=pid))
                 self._update_progress(100)
             except Exception as e:
                 error_msg = self.tr("Error launching AnyDesk: {error}").format(error=e)
                 self._update_status(error_msg, level="ERROR")
                 self._update_text_area(self.tr("Error launching AnyDesk:") + f"\n{error_msg}")
                 self._update_progress(0)
-        elif accepted and not password:
-             self._update_status(self.tr("AnyDesk launch canceled: no password entered."), level="WARNING")
-             self._update_text_area(self.tr("AnyDesk launch canceled: a password was not provided."))
-             self._update_progress(0)
         else:
             self._update_status(self.tr("AnyDesk launch canceled by user."), level="WARNING")
             self._update_text_area(self.tr("AnyDesk launch canceled by user."))
