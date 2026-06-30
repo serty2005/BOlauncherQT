@@ -10,6 +10,7 @@ LOG_FILE_NAME = "debug_log.log" # Это будет использоваться
 DEFAULT_CONFIG = {
     'Settings': {
         'HttpRequestTimeoutSec': '15',
+        'UseProxyEnvironment': 'True',
         'InstallerRoot': 'C:\\iiko_Distr', # Корневой каталог для ЛОКАЛЬНЫХ дистрибутивов
         'ConfigFileWaitTimeoutSec': '60',
         'ConfigFileCheckIntervalMs': '100',

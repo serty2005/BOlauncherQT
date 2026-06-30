@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from core.config import get_config_value
 from utils.url_utils import parse_target_string, determine_app_type, sanitize_for_path, get_appdata_path, format_version, get_expected_installer_name
 from utils.file_utils import wait_for_file, edit_config_file, get_file_company_name
+from utils.http_utils import requests_get
 from utils.process_utils import stop_process_by_pid
 
 
@@ -32,9 +33,9 @@ def _build_resto_url(parsed_target, endpoint):
     return probe_url + endpoint
 
 
-def _request_json_server_info(url, http_timeout, stream=False):
+def _request_json_server_info(config, url, http_timeout, stream=False):
     try:
-        response = requests.get(url, stream=stream, timeout=http_timeout)
+        response = requests_get(config, url, stream=stream, timeout=http_timeout)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.Timeout as e:
@@ -47,9 +48,9 @@ def _request_json_server_info(url, http_timeout, stream=False):
          raise ConnectionError(f"Неожиданная ошибка при запросе к '{url}': {e}") from e
 
 
-def _request_xml_server_info(url, http_timeout, stream=False):
+def _request_xml_server_info(config, url, http_timeout, stream=False):
     try:
-        response = requests.get(url, stream=stream, timeout=http_timeout)
+        response = requests_get(config, url, stream=stream, timeout=http_timeout)
         response.raise_for_status()
         root = ET.fromstring(response.content)
         return {child.tag: None if child.attrib.get("null") == "1" else child.text for child in root}
@@ -69,7 +70,7 @@ def _get_server_info(config, parsed_target, stream=False):
     logging.info(f"URL для запроса информации о сервере: {probe_url}")
 
     try:
-        return _request_json_server_info(probe_url, http_timeout, stream=stream), probe_url
+        return _request_json_server_info(config, probe_url, http_timeout, stream=stream), probe_url
     except ConnectionError as e:
         original_error = e.__cause__
         response = getattr(original_error, "response", None)
@@ -78,7 +79,7 @@ def _get_server_info(config, parsed_target, stream=False):
 
         fallback_url = _build_resto_url(parsed_target, "/resto/get_server_info.jsp?encoding=UTF-8")
         logging.warning(f"Запрос '{probe_url}' вернул 403. Пробуем fallback: {fallback_url}")
-        return _request_xml_server_info(fallback_url, http_timeout, stream=stream), fallback_url
+        return _request_xml_server_info(config, fallback_url, http_timeout, stream=stream), fallback_url
 
 
 # --- Функции для кнопки "Check" ---

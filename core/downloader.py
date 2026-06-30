@@ -10,6 +10,7 @@ import shutil
 
 # Импортируем get_config_value из core.config
 from core.config import get_config_value
+from utils.http_utils import requests_session
 
 # Добавляем is_canceled_callback в параметры функций скачивания
 def download_from_http(config, app_type, version_formatted, temp_archive_path, update_status_callback, update_progress_callback, progress_base, progress_range, is_canceled_callback=None):
@@ -41,30 +42,31 @@ def download_from_http(config, app_type, version_formatted, temp_archive_path, u
     logging.info(f"Попытка скачивания с HTTP: '{http_full_url}' в '{temp_archive_path}'.")
 
     try:
-        response = requests.get(http_full_url, stream=True, timeout=get_config_value(config, 'Settings', 'HttpRequestTimeoutSec', default=15, type_cast=int))
-        response.raise_for_status()
+        with requests_session(config) as session:
+            response = session.get(http_full_url, stream=True, timeout=get_config_value(config, 'Settings', 'HttpRequestTimeoutSec', default=15, type_cast=int))
+            response.raise_for_status()
 
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded_size = 0
-        buffer_size = 8192
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded_size = 0
+            buffer_size = 8192
 
-        with open(temp_archive_path, 'wb') as f_dst:
-            for chunk in response.iter_content(chunk_size=buffer_size):
-                if is_canceled_callback and is_canceled_callback():
-                     logging.warning("Скачивание HTTP отменено.")
-                     if update_status_callback: update_status_callback("Скачивание HTTP отменено.")
-                     # Очищаем частичный файл при отмене
-                     if os.path.exists(temp_archive_path):
-                         try: os.remove(temp_archive_path)
-                         except Exception as e: logging.warning(f"Ошибка при удалении частичного файла '{temp_archive_path}' после отмены: {e}")
-                     return False # Сигнал отмены
+            with open(temp_archive_path, 'wb') as f_dst:
+                for chunk in response.iter_content(chunk_size=buffer_size):
+                    if is_canceled_callback and is_canceled_callback():
+                         logging.warning("Скачивание HTTP отменено.")
+                         if update_status_callback: update_status_callback("Скачивание HTTP отменено.")
+                         # Очищаем частичный файл при отмене
+                         if os.path.exists(temp_archive_path):
+                             try: os.remove(temp_archive_path)
+                             except Exception as e: logging.warning(f"Ошибка при удалении частичного файла '{temp_archive_path}' после отмены: {e}")
+                         return False # Сигнал отмены
 
-                if chunk:
-                    f_dst.write(chunk)
-                    downloaded_size += len(chunk)
-                    if update_progress_callback and total_size > 0:
-                         current_source_progress = (downloaded_size / total_size)
-                         update_progress_callback(progress_base + current_source_progress * progress_range)
+                    if chunk:
+                        f_dst.write(chunk)
+                        downloaded_size += len(chunk)
+                        if update_progress_callback and total_size > 0:
+                             current_source_progress = (downloaded_size / total_size)
+                             update_progress_callback(progress_base + current_source_progress * progress_range)
 
         logging.info("Скачивание HTTP завершено.")
         if update_status_callback: update_status_callback("Скачивание HTTP завершено.")
