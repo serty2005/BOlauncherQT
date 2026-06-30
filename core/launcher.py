@@ -6,12 +6,79 @@ import requests
 import logging
 import shutil # Импортируем shutil для очистки папок
 import traceback # Импортируем traceback для логирования ошибок перед перебрасыванием
+import xml.etree.ElementTree as ET
 
 # Импортируем нужные функции из других модулей
 from core.config import get_config_value
 from utils.url_utils import parse_target_string, determine_app_type, sanitize_for_path, get_appdata_path, format_version, get_expected_installer_name
 from utils.file_utils import wait_for_file, edit_config_file, get_file_company_name
 from utils.process_utils import stop_process_by_pid
+
+
+def _build_resto_url(parsed_target, endpoint):
+    target_url_or_ip = parsed_target['UrlOrIp']
+    target_port = parsed_target['Port']
+    probe_scheme = parsed_target['Scheme']
+
+    include_port_in_probe_url = True
+    if probe_scheme == "http" and target_port == 80:
+         include_port_in_probe_url = False
+    elif probe_scheme == "https" and target_port == 443:
+         include_port_in_probe_url = False
+
+    probe_url = f"{probe_scheme}://{target_url_or_ip}"
+    if include_port_in_probe_url:
+        probe_url += f":{target_port}"
+    return probe_url + endpoint
+
+
+def _request_json_server_info(url, http_timeout, stream=False):
+    try:
+        response = requests.get(url, stream=stream, timeout=http_timeout)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.Timeout as e:
+        raise ConnectionError(f"Таймаут ({http_timeout} сек) при выполнении GET-запроса к '{url}'") from e
+    except requests.exceptions.ConnectionError as e:
+         raise ConnectionError(f"Ошибка подключения при выполнении GET-запроса к '{url}': {e}") from e
+    except requests.exceptions.RequestException as e:
+        raise ConnectionError(f"Ошибка HTTP запроса к '{url}': {e}") from e
+    except Exception as e:
+         raise ConnectionError(f"Неожиданная ошибка при запросе к '{url}': {e}") from e
+
+
+def _request_xml_server_info(url, http_timeout, stream=False):
+    try:
+        response = requests.get(url, stream=stream, timeout=http_timeout)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        return {child.tag: None if child.attrib.get("null") == "1" else child.text for child in root}
+    except requests.exceptions.Timeout as e:
+        raise ConnectionError(f"Таймаут ({http_timeout} сек) при выполнении GET-запроса к '{url}'") from e
+    except requests.exceptions.ConnectionError as e:
+         raise ConnectionError(f"Ошибка подключения при выполнении GET-запроса к '{url}': {e}") from e
+    except requests.exceptions.RequestException as e:
+        raise ConnectionError(f"Ошибка HTTP запроса к '{url}': {e}") from e
+    except Exception as e:
+         raise ConnectionError(f"Неожиданная ошибка при запросе к '{url}': {e}") from e
+
+
+def _get_server_info(config, parsed_target, stream=False):
+    http_timeout = get_config_value(config, 'Settings', 'HttpRequestTimeoutSec', default=15, type_cast=int)
+    probe_url = _build_resto_url(parsed_target, "/resto/getServerMonitoringInfo.jsp")
+    logging.info(f"URL для запроса информации о сервере: {probe_url}")
+
+    try:
+        return _request_json_server_info(probe_url, http_timeout, stream=stream), probe_url
+    except ConnectionError as e:
+        original_error = e.__cause__
+        response = getattr(original_error, "response", None)
+        if not isinstance(original_error, requests.exceptions.HTTPError) or getattr(response, "status_code", None) != 403:
+            raise
+
+        fallback_url = _build_resto_url(parsed_target, "/resto/get_server_info.jsp?encoding=UTF-8")
+        logging.warning(f"Запрос '{probe_url}' вернул 403. Пробуем fallback: {fallback_url}")
+        return _request_xml_server_info(fallback_url, http_timeout, stream=stream), fallback_url
 
 
 # --- Функции для кнопки "Check" ---
@@ -33,60 +100,17 @@ def check_server_info(config, target_string, update_status_callback=None, update
             raise ValueError("Не удалось распарсить ввод или извлечь хост/IP.") # Выбрасываем ошибку при неудаче парсинга
         if update_progress_callback: update_progress_callback(check_progress_base + parse_progress_range)
 
-        target_url_or_ip = parsed_target['UrlOrIp']
-        target_port = parsed_target['Port']
-        # ИСПРАВЛЕНО: Используем схему, определенную парсером на основе порта
-        probe_scheme = parsed_target['Scheme']
-        logging.debug(f"Определена схема '{probe_scheme}' для probe_url на основе порта '{target_port}'.")
-
-
         # Шаг проверки: Формирование URL и запрос (10-90% прогресса проверки)
         http_request_progress_base = check_progress_base + parse_progress_range
         http_request_progress_range = 80 # Оставляем 10% на обработку результата
 
+        target_url_or_ip = parsed_target['UrlOrIp']
+        target_port = parsed_target['Port']
         if update_status_callback: update_status_callback(f"Запрос информации о сервере: {target_url_or_ip}:{target_port}...")
 
-        # Логика формирования probe_url: используем схему, определенную выше, и порт из парсинга.
-        # Порт включается в URL только если он НЕ стандартный для этой схемы.
-        standard_http_port = 80
-        standard_https_port = 443
-        include_port_in_probe_url = True
-
-        if probe_scheme == "http" and target_port == standard_http_port:
-             include_port_in_probe_url = False
-        elif probe_scheme == "https" and target_port == standard_https_port:
-             include_port_in_probe_url = False
-        # Если порт указан явно, даже если он стандартный, включаем его в URL для надежности
-        # (хотя requests может быть умным и без этого).
-        # Эта логика осталась, но теперь она применяется к схеме, определенной портом.
-
-
-        probe_url = f"{probe_scheme}://{target_url_or_ip}"
-        if include_port_in_probe_url:
-            probe_url += f":{target_port}"
-        probe_url += "/resto/getServerMonitoringInfo.jsp"
-
-        logging.info(f"URL для запроса информации о сервере (проверка): {probe_url}")
-
-        http_timeout = get_config_value(config, 'Settings', 'HttpRequestTimeoutSec', default=15, type_cast=int)
-        server_info = None
-        try:
-            if update_progress_callback: update_progress_callback(http_request_progress_base + http_request_progress_range * 0.1) # Прогресс в начале запроса
-
-            response = requests.get(probe_url, timeout=http_timeout)
-            response.raise_for_status()
-            server_info = response.json()
-
-            if update_progress_callback: update_progress_callback(http_request_progress_base + http_request_progress_range) # Прогресс после запроса
-
-        except requests.exceptions.Timeout:
-            raise ConnectionError(f"Таймаут ({http_timeout} сек) при выполнении GET-запроса к '{probe_url}'")
-        except requests.exceptions.ConnectionError as e:
-             raise ConnectionError(f"Ошибка подключения при выполнении GET-запроса к '{probe_url}': {e}")
-        except requests.exceptions.RequestException as e:
-            raise ConnectionError(f"Ошибка HTTP запроса к '{probe_url}': {e}")
-        except Exception as e:
-             raise ConnectionError(f"Неожиданная ошибка при запросе к '{probe_url}': {e}")
+        if update_progress_callback: update_progress_callback(http_request_progress_base + http_request_progress_range * 0.1) # Прогресс в начале запроса
+        server_info, probe_url = _get_server_info(config, parsed_target)
+        if update_progress_callback: update_progress_callback(http_request_progress_base + http_request_progress_range) # Прогресс после запроса
 
         # Шаг проверки: Обработка результата (90-100% прогресса проверки)
         process_response_progress_base = http_request_progress_base + http_request_progress_range
@@ -140,46 +164,7 @@ def step_http_request(config, parsed_target):
     target_port = parsed_target['Port']
     logging.info(f"Шаг 2: Выполнение GET-запроса к {target_url_or_ip}:{target_port}...")
 
-    # ИСПРАВЛЕНО: Используем схему, определенную парсером на основе порта
-    probe_scheme = parsed_target['Scheme']
-    logging.debug(f"Определена схема '{probe_scheme}' для probe_url на основе порта '{target_port}'.")
-
-
-    standard_http_port = 80
-    standard_https_port = 443
-    include_port_in_probe_url = True
-
-    if probe_scheme == "http" and target_port == standard_http_port:
-         include_port_in_probe_url = False
-    elif probe_scheme == "https" and target_port == standard_https_port:
-         include_port_in_probe_url = False
-    # Если порт указан явно, даже если он стандартный, включаем его в URL для надежности
-    # (хотя requests может быть умным и без этого).
-    # Эта логика осталась, но теперь она применяется к схеме, определенной портом.
-
-
-    probe_url = f"{probe_scheme}://{target_url_or_ip}"
-    if include_port_in_probe_url:
-        probe_url += f":{target_port}"
-    probe_url += "/resto/getServerMonitoringInfo.jsp"
-
-    logging.info(f"URL для запроса информации о сервере: {probe_url}")
-
-    http_timeout = get_config_value(config, 'Settings', 'HttpRequestTimeoutSec', default=15, type_cast=int)
-    server_info = None
-    try:
-        response = requests.get(probe_url, stream=False, timeout=http_timeout) # stream=False для этого запроса
-        response.raise_for_status()
-        server_info = response.json()
-
-    except requests.exceptions.Timeout:
-        raise ConnectionError(f"Таймаут ({http_timeout} сек) при выполнении GET-запроса к '{probe_url}'")
-    except requests.exceptions.ConnectionError as e:
-         raise ConnectionError(f"Ошибка подключения при выполнении GET-запроса к '{probe_url}': {e}")
-    except requests.exceptions.RequestException as e:
-        raise ConnectionError(f"Ошибка HTTP запроса к '{probe_url}': {e}")
-    except Exception as e:
-         raise ConnectionError(f"Неожиданная ошибка при запросе к '{probe_url}': {e}")
+    server_info, probe_url = _get_server_info(config, parsed_target, stream=False)
 
     logging.debug(f"Получен ответ от сервера: {server_info}")
 
